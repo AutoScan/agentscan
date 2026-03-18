@@ -3,14 +3,15 @@ package logger
 import (
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 var (
-	globalLogger *zap.Logger
-	globalSugar  *zap.SugaredLogger
+	globalLogger atomic.Pointer[zap.Logger]
+	globalSugar  atomic.Pointer[zap.SugaredLogger]
 	once         sync.Once
 )
 
@@ -22,31 +23,39 @@ type Options struct {
 
 func Init(opts Options) {
 	once.Do(func() {
-		globalLogger = build(opts)
-		globalSugar = globalLogger.Sugar()
+		l := build(opts)
+		s := l.Sugar()
+		globalLogger.Store(l)
+		globalSugar.Store(s)
 	})
 }
 
-// L returns the global zap.Logger. Init must be called first.
+func initDefault() {
+	Init(Options{Level: "info", Format: "console"})
+}
+
+// L returns the global zap.Logger, lazily initializing with defaults if needed.
 func L() *zap.Logger {
-	if globalLogger == nil {
-		Init(Options{Level: "info", Format: "console"})
+	if l := globalLogger.Load(); l != nil {
+		return l
 	}
-	return globalLogger
+	initDefault()
+	return globalLogger.Load()
 }
 
 // S returns the global sugared logger for printf-style usage.
 func S() *zap.SugaredLogger {
-	if globalSugar == nil {
-		Init(Options{Level: "info", Format: "console"})
+	if s := globalSugar.Load(); s != nil {
+		return s
 	}
-	return globalSugar
+	initDefault()
+	return globalSugar.Load()
 }
 
 // Sync flushes buffered log entries. Call before exit.
 func Sync() {
-	if globalLogger != nil {
-		_ = globalLogger.Sync()
+	if l := globalLogger.Load(); l != nil {
+		_ = l.Sync()
 	}
 }
 
