@@ -79,7 +79,7 @@ cd web && npm install && npm run dev
 docker run -d --name agentscan -p 8080:8080 \
   -v agentscan-data:/data \
   -e AGENTSCAN_AUTH_JWT_SECRET=my-secret \
-  ghcr.io/agentscan/agentscan:latest
+  ghcr.io/autoscan/agentscan:latest
 ```
 
 或使用 Docker Compose：

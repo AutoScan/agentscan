@@ -1,7 +1,8 @@
 services:
   agentscan:
-    build: .
-    image: agentscan:latest
+    image: ghcr.io/autoscan/agentscan:latest
+    # To build locally instead of pulling, uncomment:
+    # build: .
     container_name: agentscan
     restart: unless-stopped
     ports:

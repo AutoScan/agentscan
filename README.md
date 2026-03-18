@@ -77,7 +77,7 @@ Open `http://localhost:5173` and sign in with:
 docker run -d --name agentscan -p 8080:8080 \
   -v agentscan-data:/data \
   -e AGENTSCAN_AUTH_JWT_SECRET=my-secret \
-  ghcr.io/agentscan/agentscan:latest
+  ghcr.io/autoscan/agentscan:latest
 ```
 
 Or use Docker Compose:
