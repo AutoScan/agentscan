@@ -1,6 +1,6 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
-import { Card, Col, Row, Typography, Spin, Tag, Space, List, Tooltip, Skeleton } from 'antd'
+import { Card, Col, Row, Typography, Tag, Space, List, Tooltip, Skeleton } from 'antd'
 import { ScanOutlined, CloudServerOutlined, BugOutlined, WarningOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { useDashboardStats } from '@/api/dashboard'
@@ -10,7 +10,7 @@ import StatCards from '@/components/StatCards'
 import StatusBadge from '@/components/StatusBadge'
 import RiskTag from '@/components/RiskTag'
 import { RISK_COLORS, RISK_LABELS, RISK_LEVELS } from '@/constants'
-import type { Task, Vulnerability, RiskLevel } from '@/types'
+import type { Task, Vulnerability } from '@/types'
 
 export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useDashboardStats()

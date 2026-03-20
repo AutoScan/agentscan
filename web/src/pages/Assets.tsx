@@ -26,6 +26,8 @@ const ASSET_QUERY_DEFAULTS: AssetQueryState = {
   risk_level: '',
 }
 
+const EMPTY_ASSETS: Asset[] = []
+
 export default function Assets() {
   const { params, setParams, resetParams } = useURLQueryState(ASSET_QUERY_DEFAULTS)
   const [searchIP, setSearchIP] = useState(params.ip)
@@ -44,7 +46,7 @@ export default function Assets() {
 
   const { data, isLoading } = useAssetList(queryParams)
 
-  const assets = data?.data ?? []
+  const assets = data?.data ?? EMPTY_ASSETS
   const total = data?.total ?? 0
 
   const riskStats = useMemo(

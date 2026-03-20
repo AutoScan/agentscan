@@ -26,6 +26,8 @@ const VULN_QUERY_DEFAULTS: VulnerabilityQueryState = {
   check_type: '',
 }
 
+const EMPTY_VULNS: Vulnerability[] = []
+
 export default function Vulnerabilities() {
   const { params, setParams, resetParams } = useURLQueryState(VULN_QUERY_DEFAULTS)
   const [searchCVE, setSearchCVE] = useState(params.cve_id)
@@ -44,7 +46,7 @@ export default function Vulnerabilities() {
 
   const { data, isLoading } = useVulnList(queryParams)
 
-  const vulns = data?.data ?? []
+  const vulns = data?.data ?? EMPTY_VULNS
   const total = data?.total ?? 0
 
   const sevStats = useMemo(

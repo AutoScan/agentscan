@@ -12,7 +12,7 @@ permissions:
 jobs:
   # ── Frontend ─────────────────────────────────────────────────────────
   frontend:
-    name: Frontend Build
+    name: Frontend Check & Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,9 +23,21 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Install & Build
+      - name: Install
         working-directory: web
-        run: npm ci && npm run build
+        run: npm ci
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint -- --max-warnings=0
+
+      - name: Test
+        working-directory: web
+        run: npm test
+
+      - name: Build
+        working-directory: web
+        run: npm run build
 
       - uses: actions/upload-artifact@v4
         with:

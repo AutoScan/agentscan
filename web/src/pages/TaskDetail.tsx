@@ -11,9 +11,6 @@ import {
   Typography,
   Tabs,
   Spin,
-  Row,
-  Col,
-  Statistic,
   Timeline,
 } from 'antd'
 import { ArrowLeftOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -26,7 +23,7 @@ import StatusBadge from '@/components/StatusBadge'
 import RiskTag from '@/components/RiskTag'
 import AuthTag from '@/components/AuthTag'
 import StatCards from '@/components/StatCards'
-import type { Asset, Vulnerability, WSMessage, TaskProgressPayload } from '@/types'
+import type { WSMessage } from '@/types'
 
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>()

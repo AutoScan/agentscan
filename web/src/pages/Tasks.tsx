@@ -136,7 +136,9 @@ export default function Tasks() {
       width: 200,
       render: (value: string, record: Task) => (
         <Link to={`/tasks/${record.id}`}>
-          <Typography.Link strong>{value}</Typography.Link>
+          <Typography.Text strong style={{ color: '#1677ff' }}>
+            {value}
+          </Typography.Text>
         </Link>
       ),
     },
@@ -319,7 +321,7 @@ export default function Tasks() {
         width={640}
         okText={taskType === 'scheduled' ? '创建任务' : '创建并执行'}
         confirmLoading={createTask.isPending}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form
           form={form}

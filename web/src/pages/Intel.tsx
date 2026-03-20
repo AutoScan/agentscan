@@ -25,7 +25,7 @@ export default function Intel() {
   const skipNextAutoSearchRef = useRef(false)
   const lastAutoSearchKeyRef = useRef('')
 
-  const searchMutation = useFOFASearch()
+  const { mutate: triggerSearch, ...searchMutation } = useFOFASearch()
   const importMutation = useFOFAImport()
 
   useEffect(() => {
@@ -54,11 +54,11 @@ export default function Intel() {
     }
 
     lastAutoSearchKeyRef.current = searchKey
-    searchMutation.mutate({
+    triggerSearch({
       query: params.query,
       limit: params.limit,
     })
-  }, [location.search, params.limit, params.query])
+  }, [location.search, params.limit, params.query, triggerSearch])
 
   const handleSearch = async () => {
     try {
@@ -71,7 +71,7 @@ export default function Intel() {
       skipNextAutoSearchRef.current = true
       lastAutoSearchKeyRef.current = `${payload.query || ''}::${payload.limit}`
       setParams(payload, { replace: false })
-      searchMutation.mutate(payload)
+      triggerSearch(payload)
     } catch (e: unknown) {
       if (e instanceof Error && e.message) {
         message.error(e.message)
