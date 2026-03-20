@@ -25,10 +25,10 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Driver      string `yaml:"driver"       mapstructure:"driver"`
-	DSN         string `yaml:"dsn"          mapstructure:"dsn"`
-	MaxOpenConn int    `yaml:"max_open_conn" mapstructure:"max_open_conn"`
-	MaxIdleConn int    `yaml:"max_idle_conn" mapstructure:"max_idle_conn"`
+	Driver      string        `yaml:"driver"       mapstructure:"driver"`
+	DSN         string        `yaml:"dsn"          mapstructure:"dsn"`
+	MaxOpenConn int           `yaml:"max_open_conn" mapstructure:"max_open_conn"`
+	MaxIdleConn int           `yaml:"max_idle_conn" mapstructure:"max_idle_conn"`
 	MaxLifetime time.Duration `yaml:"max_lifetime" mapstructure:"max_lifetime"`
 }
 
@@ -37,6 +37,7 @@ type ScannerConfig struct {
 	Timeout      time.Duration `yaml:"timeout"       mapstructure:"timeout"`
 	Concurrency  int           `yaml:"concurrency"   mapstructure:"concurrency"`
 	RateLimit    int           `yaml:"rate_limit"    mapstructure:"rate_limit"`
+	L1ScanMode   string        `yaml:"l1_scan_mode"  mapstructure:"l1_scan_mode"`
 	EnableMDNS   bool          `yaml:"enable_mdns"   mapstructure:"enable_mdns"`
 	MDNSTimeout  time.Duration `yaml:"mdns_timeout"  mapstructure:"mdns_timeout"`
 }
@@ -88,6 +89,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scanner.timeout", "3s")
 	v.SetDefault("scanner.concurrency", 100)
 	v.SetDefault("scanner.rate_limit", 10000)
+	v.SetDefault("scanner.l1_scan_mode", "connect")
 	v.SetDefault("scanner.enable_mdns", true)
 	v.SetDefault("scanner.mdns_timeout", "5s")
 
@@ -160,6 +162,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Scanner.Concurrency < 1 {
 		return fmt.Errorf("scanner.concurrency must be >= 1")
+	}
+	if cfg.Scanner.L1ScanMode != "" && cfg.Scanner.L1ScanMode != "connect" && cfg.Scanner.L1ScanMode != "syn" {
+		return fmt.Errorf("scanner.l1_scan_mode must be 'connect' or 'syn', got %q", cfg.Scanner.L1ScanMode)
 	}
 	if cfg.Scanner.Timeout <= 0 {
 		return fmt.Errorf("scanner.timeout must be > 0")

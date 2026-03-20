@@ -3,16 +3,19 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/AutoScan/agentscan/internal/core/eventbus"
 	"github.com/AutoScan/agentscan/internal/models"
+	"github.com/AutoScan/agentscan/internal/scanner/l1"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,10 +32,45 @@ func waitForAtomic(t *testing.T, val *int64, expected int64, timeout time.Durati
 	}
 }
 
+type mockOpenClawOptions struct {
+	healthDelay   time.Duration
+	onHealthStart func()
+	onHealthDone  func()
+}
+
+func updateMaxInt64(target *int64, next int64) {
+	for {
+		current := atomic.LoadInt64(target)
+		if next <= current {
+			return
+		}
+		if atomic.CompareAndSwapInt64(target, current, next) {
+			return
+		}
+	}
+}
+
 func startMockOpenClaw(t *testing.T) (int, func()) {
+	t.Helper()
+	return startMockOpenClawWithOptions(t, mockOpenClawOptions{})
+}
+
+func startMockOpenClawWithOptions(t *testing.T, opts mockOpenClawOptions) (int, func()) {
+	t.Helper()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if opts.onHealthStart != nil {
+			opts.onHealthStart()
+		}
+		if opts.onHealthDone != nil {
+			defer opts.onHealthDone()
+		}
+		if opts.healthDelay > 0 {
+			time.Sleep(opts.healthDelay)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ok": true, "status": "live",
@@ -196,4 +234,196 @@ func TestPipelineL1Only(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.OpenPorts)
 	assert.Equal(t, 0, len(result.Assets), "L1 only should not fingerprint")
+}
+
+func TestPipelineL2Concurrency(t *testing.T) {
+	var inFlight int64
+	var maxInFlight int64
+
+	ports := make([]int, 0, 4)
+	cleanups := make([]func(), 0, 4)
+	for range 4 {
+		port, cleanup := startMockOpenClawWithOptions(t, mockOpenClawOptions{
+			healthDelay: 150 * time.Millisecond,
+			onHealthStart: func() {
+				current := atomic.AddInt64(&inFlight, 1)
+				updateMaxInt64(&maxInFlight, current)
+			},
+			onHealthDone: func() {
+				atomic.AddInt64(&inFlight, -1)
+			},
+		})
+		ports = append(ports, port)
+		cleanups = append(cleanups, cleanup)
+	}
+	for _, cleanup := range cleanups {
+		defer cleanup()
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	pipeline := NewPipeline(eventbus.NewLocal())
+	result, err := pipeline.Run(context.Background(), "127.0.0.1", PipelineConfig{
+		Ports:       ports,
+		ScanDepth:   models.ScanDepthL2,
+		Timeout:     2 * time.Second,
+		Concurrency: 3,
+		EnableMDNS:  false,
+		TaskID:      "test-task",
+	})
+
+	require.NoError(t, err)
+	assert.Len(t, result.Assets, len(ports))
+	assert.Greater(t, atomic.LoadInt64(&maxInFlight), int64(1))
+	assert.LessOrEqual(t, atomic.LoadInt64(&maxInFlight), int64(3))
+}
+
+func TestPipelineL2RateLimit(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		startTimes []time.Time
+	)
+
+	ports := make([]int, 0, 2)
+	cleanups := make([]func(), 0, 2)
+	for range 2 {
+		port, cleanup := startMockOpenClawWithOptions(t, mockOpenClawOptions{
+			healthDelay: 100 * time.Millisecond,
+			onHealthStart: func() {
+				mu.Lock()
+				startTimes = append(startTimes, time.Now())
+				mu.Unlock()
+			},
+		})
+		ports = append(ports, port)
+		cleanups = append(cleanups, cleanup)
+	}
+	for _, cleanup := range cleanups {
+		defer cleanup()
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	pipeline := NewPipeline(eventbus.NewLocal())
+	result, err := pipeline.Run(context.Background(), "127.0.0.1", PipelineConfig{
+		Ports:       ports,
+		ScanDepth:   models.ScanDepthL2,
+		Timeout:     2 * time.Second,
+		Concurrency: 4,
+		RateLimit:   2,
+		EnableMDNS:  false,
+		TaskID:      "test-task",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Assets, len(ports))
+	require.Len(t, startTimes, len(ports))
+	assert.GreaterOrEqual(t, startTimes[1].Sub(startTimes[0]), 350*time.Millisecond)
+}
+
+func TestPipelineL2CancellationStopsDispatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var started int64
+	var cancelOnce sync.Once
+
+	ports := make([]int, 0, 3)
+	cleanups := make([]func(), 0, 3)
+	for range 3 {
+		port, cleanup := startMockOpenClawWithOptions(t, mockOpenClawOptions{
+			healthDelay: 150 * time.Millisecond,
+			onHealthStart: func() {
+				atomic.AddInt64(&started, 1)
+				cancelOnce.Do(cancel)
+			},
+		})
+		ports = append(ports, port)
+		cleanups = append(cleanups, cleanup)
+	}
+	for _, cleanup := range cleanups {
+		defer cleanup()
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	pipeline := NewPipeline(eventbus.NewLocal())
+	result, err := pipeline.Run(ctx, "127.0.0.1", PipelineConfig{
+		Ports:       ports,
+		ScanDepth:   models.ScanDepthL2,
+		Timeout:     2 * time.Second,
+		Concurrency: 4,
+		RateLimit:   1,
+		EnableMDNS:  false,
+		TaskID:      "test-task",
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&started))
+	assert.Len(t, result.Assets, 1)
+}
+
+func TestPipelineL1ScanModeConnectUsesTCPScanner(t *testing.T) {
+	port, cleanup := startMockOpenClaw(t)
+	defer cleanup()
+	time.Sleep(100 * time.Millisecond)
+
+	originalTCPFactory := newTCPScanner
+	originalSYNFactory := newSYNScanner
+	t.Cleanup(func() {
+		newTCPScanner = originalTCPFactory
+		newSYNScanner = originalSYNFactory
+	})
+
+	var tcpCalls int64
+	newTCPScanner = func(timeout time.Duration, concurrency int) portScanner {
+		atomic.AddInt64(&tcpCalls, 1)
+		return l1.NewTCPScanner(timeout, concurrency)
+	}
+	newSYNScanner = func(timeout time.Duration, concurrency int) (portScanner, error) {
+		t.Fatalf("syn scanner should not be constructed for connect mode")
+		return nil, nil
+	}
+
+	pipeline := NewPipeline(eventbus.NewLocal())
+	result, err := pipeline.Run(context.Background(), "127.0.0.1", PipelineConfig{
+		Ports:       []int{port},
+		ScanDepth:   models.ScanDepthL1,
+		Timeout:     3 * time.Second,
+		Concurrency: 10,
+		L1ScanMode:  "connect",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&tcpCalls))
+	assert.Equal(t, 1, result.OpenPorts)
+}
+
+func TestPipelineL1ScanModeSynFallsBackToConnect(t *testing.T) {
+	port, cleanup := startMockOpenClaw(t)
+	defer cleanup()
+	time.Sleep(100 * time.Millisecond)
+
+	originalTCPFactory := newTCPScanner
+	originalSYNFactory := newSYNScanner
+	t.Cleanup(func() {
+		newTCPScanner = originalTCPFactory
+		newSYNScanner = originalSYNFactory
+	})
+
+	var synCalls int64
+	newSYNScanner = func(timeout time.Duration, concurrency int) (portScanner, error) {
+		atomic.AddInt64(&synCalls, 1)
+		return nil, errors.New("raw sockets unavailable")
+	}
+
+	pipeline := NewPipeline(eventbus.NewLocal())
+	result, err := pipeline.Run(context.Background(), "127.0.0.1", PipelineConfig{
+		Ports:       []int{port},
+		ScanDepth:   models.ScanDepthL1,
+		Timeout:     3 * time.Second,
+		Concurrency: 10,
+		L1ScanMode:  "syn",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&synCalls))
+	assert.Equal(t, 1, result.OpenPorts)
 }

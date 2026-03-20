@@ -19,6 +19,7 @@ scanner:
   timeout: "3s"
   concurrency: 100
   rate_limit: 10000
+  l1_scan_mode: "connect"
   enable_mdns: true
   mdns_timeout: "5s"
 

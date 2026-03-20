@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AutoScan/agentscan/internal/core/eventbus"
+	"github.com/AutoScan/agentscan/internal/core/logger"
 	"github.com/AutoScan/agentscan/internal/models"
 	"github.com/AutoScan/agentscan/internal/scanner"
 	"github.com/AutoScan/agentscan/internal/scanner/l1"
@@ -15,6 +16,7 @@ import (
 	"github.com/AutoScan/agentscan/internal/scanner/l3"
 	"github.com/AutoScan/agentscan/internal/utils/iputil"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type PipelineConfig struct {
@@ -22,6 +24,8 @@ type PipelineConfig struct {
 	ScanDepth   models.ScanDepth
 	Timeout     time.Duration
 	Concurrency int
+	RateLimit   int
+	L1ScanMode  string
 	EnableMDNS  bool
 	MDNSTimeout time.Duration
 	EnablePoC   bool
@@ -40,6 +44,39 @@ type ProgressCallback func(scanned, total int, phase string)
 type Pipeline struct {
 	bus        eventbus.EventBus
 	onProgress ProgressCallback
+}
+
+type portScanner interface {
+	ScanPorts(ip string, ports []int) []scanner.PortResult
+}
+
+type endpoint struct {
+	ip   string
+	port int
+}
+
+type indexedEndpoint struct {
+	index    int
+	endpoint endpoint
+}
+
+type l2Outcome struct {
+	index           int
+	asset           *models.Asset
+	vulnerabilities []models.Vulnerability
+}
+
+type endpointRateLimiter struct {
+	interval time.Duration
+	next     time.Time
+}
+
+var newTCPScanner = func(timeout time.Duration, concurrency int) portScanner {
+	return l1.NewTCPScanner(timeout, concurrency)
+}
+
+var newSYNScanner = func(timeout time.Duration, concurrency int) (portScanner, error) {
+	return l1.NewSYNScanner(timeout, concurrency)
 }
 
 func NewPipeline(bus eventbus.EventBus) *Pipeline {
@@ -61,14 +98,15 @@ func (p *Pipeline) Run(ctx context.Context, targets string, cfg PipelineConfig) 
 	if len(ports) == 0 {
 		ports = []int{18789, 18792, 3000, 8080, 8888}
 	}
+	concurrency := normalizedConcurrency(cfg.Concurrency)
 
 	// --- L1: Port Discovery ---
 	var scannedCount int64
-	tcpScanner := l1.NewTCPScanner(cfg.Timeout, cfg.Concurrency)
+	l1Scanner := p.newL1Scanner(cfg.Timeout, concurrency, cfg.L1ScanMode)
 	var openPorts []scanner.PortResult
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, cfg.Concurrency)
+	sem := make(chan struct{}, concurrency)
 	var cancelled bool
 
 	for _, ip := range ips {
@@ -82,7 +120,7 @@ func (p *Pipeline) Run(ctx context.Context, targets string, cfg PipelineConfig) 
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			results := tcpScanner.ScanPorts(ip, ports)
+			results := l1Scanner.ScanPorts(ip, ports)
 			var found []scanner.PortResult
 			for _, r := range results {
 				if r.Open {
@@ -134,10 +172,6 @@ func (p *Pipeline) Run(ctx context.Context, targets string, cfg PipelineConfig) 
 	}
 
 	// --- L2: Fingerprinting ---
-	type endpoint struct {
-		ip   string
-		port int
-	}
 	seen := make(map[endpoint]bool)
 	var l2Targets []endpoint
 	for _, pr := range openPorts {
@@ -155,38 +189,194 @@ func (p *Pipeline) Run(ctx context.Context, targets string, cfg PipelineConfig) 
 		}
 	}
 
-	httpProber := l2.NewHTTPProber(cfg.Timeout)
-	wsProber := l2.NewWSProber(cfg.Timeout)
-
-	for i, ep := range l2Targets {
-		if ctx.Err() != nil {
-			return result, ctx.Err()
-		}
-		agent := fingerprint(ep.ip, ep.port, httpProber, wsProber, mdnsEntries)
-		if agent.Score > 0 {
-			asset := agentToAsset(agent, cfg.TaskID)
-
-			if cfg.ScanDepth == models.ScanDepthL3 && agent.AgentType == "openclaw" {
-				vulns := p.validateL3(asset, agent, cfg)
-				result.Vulnerabilities = append(result.Vulnerabilities, vulns...)
-			}
-
-			result.Assets = append(result.Assets, asset)
-
-			if p.bus != nil {
-				p.bus.Publish(ctx, eventbus.Event{
-					Topic:   eventbus.TopicAgentIdentified,
-					Payload: asset,
-				})
-			}
-		}
-
-		if p.onProgress != nil {
-			p.onProgress(i+1, len(l2Targets), "l2")
-		}
+	if err := p.runL2(ctx, l2Targets, mdnsEntries, cfg, result); err != nil {
+		return result, err
 	}
 
 	return result, nil
+}
+
+func (p *Pipeline) newL1Scanner(timeout time.Duration, concurrency int, mode string) portScanner {
+	if mode == "syn" {
+		synScanner, err := newSYNScanner(timeout, concurrency)
+		if err == nil {
+			return synScanner
+		}
+
+		logger.Named("pipeline").Warn("syn scan unavailable, falling back to tcp connect",
+			zap.String("mode", mode),
+			zap.Error(err),
+		)
+	}
+
+	return newTCPScanner(timeout, concurrency)
+}
+
+func (p *Pipeline) runL2(
+	ctx context.Context,
+	l2Targets []endpoint,
+	mdnsEntries map[string]l2.MDNSEntry,
+	cfg PipelineConfig,
+	result *PipelineResult,
+) error {
+	if len(l2Targets) == 0 {
+		return nil
+	}
+
+	httpProber := l2.NewHTTPProber(cfg.Timeout)
+	wsProber := l2.NewWSProber(cfg.Timeout)
+	workerCount := normalizedConcurrency(cfg.Concurrency)
+	if workerCount > len(l2Targets) {
+		workerCount = len(l2Targets)
+	}
+
+	jobs := make(chan indexedEndpoint)
+	outcomes := make(chan l2Outcome, len(l2Targets))
+	var wg sync.WaitGroup
+	var completed int64
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for job := range jobs {
+				outcomes <- p.processL2Target(ctx, job, httpProber, wsProber, mdnsEntries, cfg, len(l2Targets), &completed)
+			}
+		}()
+	}
+
+	limiter := newEndpointRateLimiter(cfg.RateLimit)
+	cancelled := false
+	for index, target := range l2Targets {
+		if ctx.Err() != nil {
+			cancelled = true
+			break
+		}
+		if err := limiter.Wait(ctx); err != nil {
+			cancelled = true
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			cancelled = true
+		case jobs <- indexedEndpoint{index: index, endpoint: target}:
+		}
+
+		if cancelled {
+			break
+		}
+	}
+
+	close(jobs)
+	wg.Wait()
+	close(outcomes)
+
+	ordered := make([]l2Outcome, len(l2Targets))
+	for outcome := range outcomes {
+		ordered[outcome.index] = outcome
+	}
+
+	for _, outcome := range ordered {
+		if outcome.asset == nil {
+			continue
+		}
+
+		result.Assets = append(result.Assets, *outcome.asset)
+		result.Vulnerabilities = append(result.Vulnerabilities, outcome.vulnerabilities...)
+	}
+
+	if cancelled || ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	return nil
+}
+
+func (p *Pipeline) processL2Target(
+	ctx context.Context,
+	job indexedEndpoint,
+	hp *l2.HTTPProber,
+	wp *l2.WSProber,
+	mdns map[string]l2.MDNSEntry,
+	cfg PipelineConfig,
+	total int,
+	completed *int64,
+) l2Outcome {
+	agent := fingerprint(job.endpoint.ip, job.endpoint.port, hp, wp, mdns)
+	outcome := l2Outcome{index: job.index}
+
+	if agent.Score > 0 {
+		asset := agentToAsset(agent, cfg.TaskID)
+		outcome.asset = &asset
+
+		if cfg.ScanDepth == models.ScanDepthL3 && agent.AgentType == "openclaw" {
+			outcome.vulnerabilities = p.validateL3(asset, agent, cfg)
+		}
+
+		if p.bus != nil {
+			p.bus.Publish(ctx, eventbus.Event{
+				Topic:   eventbus.TopicAgentIdentified,
+				Payload: asset,
+			})
+		}
+	}
+
+	n := atomic.AddInt64(completed, 1)
+	if p.onProgress != nil {
+		p.onProgress(int(n), total, "l2")
+	}
+
+	return outcome
+}
+
+func newEndpointRateLimiter(rate int) *endpointRateLimiter {
+	if rate <= 0 {
+		return nil
+	}
+
+	interval := time.Second / time.Duration(rate)
+	if interval <= 0 {
+		interval = time.Nanosecond
+	}
+
+	return &endpointRateLimiter{interval: interval}
+}
+
+func (l *endpointRateLimiter) Wait(ctx context.Context) error {
+	if l == nil {
+		return nil
+	}
+
+	now := time.Now()
+	if l.next.Before(now) {
+		l.next = now
+	}
+
+	waitUntil := l.next
+	l.next = l.next.Add(l.interval)
+	wait := time.Until(waitUntil)
+	if wait <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func normalizedConcurrency(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
 }
 
 func fingerprint(ip string, port int, hp *l2.HTTPProber, wp *l2.WSProber, mdns map[string]l2.MDNSEntry) scanner.AgentInfo {

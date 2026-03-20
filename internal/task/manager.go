@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/AutoScan/agentscan/internal/core/config"
-	"github.com/AutoScan/agentscan/internal/engine"
 	"github.com/AutoScan/agentscan/internal/core/eventbus"
+	"github.com/AutoScan/agentscan/internal/engine"
 	"github.com/AutoScan/agentscan/internal/models"
 	"github.com/AutoScan/agentscan/internal/store"
 	"github.com/AutoScan/agentscan/internal/utils/iputil"
@@ -23,8 +23,8 @@ type Manager struct {
 	cfg      *config.Config
 	pipeline *engine.Pipeline
 
-	mu       sync.Mutex
-	running  map[string]context.CancelFunc
+	mu      sync.Mutex
+	running map[string]context.CancelFunc
 }
 
 func NewManager(s store.Store, bus eventbus.EventBus, cfg *config.Config) *Manager {
@@ -53,6 +53,9 @@ func (m *Manager) Create(ctx context.Context, t *models.Task) error {
 	}
 	if t.Concurrency == 0 {
 		t.Concurrency = m.cfg.Scanner.Concurrency
+	}
+	if t.RateLimit == 0 {
+		t.RateLimit = m.cfg.Scanner.RateLimit
 	}
 	if t.Timeout == 0 {
 		t.Timeout = int(m.cfg.Scanner.Timeout.Seconds())
@@ -122,11 +125,17 @@ func (m *Manager) execute(ctx context.Context, task *models.Task) {
 	}()
 
 	ports := parsePorts(task.Ports)
+	rateLimit := task.RateLimit
+	if rateLimit == 0 {
+		rateLimit = m.cfg.Scanner.RateLimit
+	}
 	pCfg := engine.PipelineConfig{
 		Ports:       ports,
 		ScanDepth:   task.ScanDepth,
 		Timeout:     time.Duration(task.Timeout) * time.Second,
 		Concurrency: task.Concurrency,
+		RateLimit:   rateLimit,
+		L1ScanMode:  m.cfg.Scanner.L1ScanMode,
 		EnableMDNS:  task.EnableMDNS,
 		MDNSTimeout: m.cfg.Scanner.MDNSTimeout,
 		EnablePoC:   task.ScanDepth == models.ScanDepthL3,

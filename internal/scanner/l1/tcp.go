@@ -15,6 +15,10 @@ type TCPScanner struct {
 }
 
 func NewTCPScanner(timeout time.Duration, concurrency int) *TCPScanner {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
 	return &TCPScanner{
 		Timeout:     timeout,
 		Concurrency: concurrency,

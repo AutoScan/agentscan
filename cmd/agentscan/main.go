@@ -161,6 +161,11 @@ func scanCmd() *cobra.Command {
 			concurrency, _ := cmd.Flags().GetInt("concurrency")
 			depth, _ := cmd.Flags().GetString("depth")
 			useMDNS, _ := cmd.Flags().GetBool("mdns")
+			l1ScanMode, _ := cmd.Flags().GetString("l1-scan-mode")
+
+			if l1ScanMode != "connect" && l1ScanMode != "syn" {
+				return fmt.Errorf("invalid l1 scan mode %q: must be connect or syn", l1ScanMode)
+			}
 
 			fmt.Println("╔══════════════════════════════════════════════════════════╗")
 			fmt.Println("║            AgentScan  v0.1.0                            ║")
@@ -183,6 +188,8 @@ func scanCmd() *cobra.Command {
 				ScanDepth:   models.ScanDepth(depth),
 				Timeout:     timeout,
 				Concurrency: concurrency,
+				RateLimit:   10000,
+				L1ScanMode:  l1ScanMode,
 				EnableMDNS:  useMDNS,
 				MDNSTimeout: 5 * time.Second,
 				TaskID:      "cli-scan",
@@ -234,6 +241,7 @@ func scanCmd() *cobra.Command {
 	cmd.Flags().DurationP("timeout", "t", 3*time.Second, "连接超时")
 	cmd.Flags().IntP("concurrency", "c", 100, "并发数")
 	cmd.Flags().String("depth", "l3", "扫描深度 (l1|l2|l3)")
+	cmd.Flags().String("l1-scan-mode", "connect", "L1 扫描模式 (connect|syn)")
 	cmd.Flags().Bool("mdns", true, "启用 mDNS 服务发现")
 
 	return cmd
