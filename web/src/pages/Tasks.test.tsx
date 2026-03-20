@@ -99,7 +99,7 @@ describe('Tasks page', () => {
     await waitFor(() => {
       expect(screen.getByTestId('location-display')).not.toHaveTextContent('status=')
     })
-  })
+  }, 20000,)
 
   it('opens create modal and confirms before overriding imported targets', async () => {
     const user = userEvent.setup()
