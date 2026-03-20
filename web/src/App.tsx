@@ -12,6 +12,8 @@ const Tasks = React.lazy(() => import('@/pages/Tasks'))
 const TaskDetail = React.lazy(() => import('@/pages/TaskDetail'))
 const Assets = React.lazy(() => import('@/pages/Assets'))
 const Vulnerabilities = React.lazy(() => import('@/pages/Vulnerabilities'))
+const Alerts = React.lazy(() => import('@/pages/Alerts'))
+const Intel = React.lazy(() => import('@/pages/Intel'))
 
 const PageLoading = () => <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />
 
@@ -48,6 +50,8 @@ export default function App() {
             <Route path="tasks/:id" element={<TaskDetail />} />
             <Route path="assets" element={<Assets />} />
             <Route path="vulnerabilities" element={<Vulnerabilities />} />
+            <Route path="alerts" element={<Alerts />} />
+            <Route path="intel" element={<Intel />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

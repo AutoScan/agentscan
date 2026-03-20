@@ -3,6 +3,15 @@ export type ScanDepth = 'l1' | 'l2' | 'l3'
 export type RiskLevel = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type CheckType = 'cve_match' | 'auth_check' | 'skills_check' | 'poc_verify' | 'ws_hijack' | 'path_traversal' | 'ssrf'
+export type AlertEventType = 'agent.identified' | 'vuln.detected' | 'task.completed'
+export type AlertCondition =
+  | 'always'
+  | 'severity_gte'
+  | 'risk_gte'
+  | 'new_agent'
+  | 'unauth_agent'
+  | 'malicious_skill'
+  | 'task_completed'
 
 export type TaskType = 'instant' | 'scheduled'
 
@@ -99,4 +108,46 @@ export interface DashboardStats {
   recent_tasks?: Task[]
   recent_vulns?: Vulnerability[]
   auth_distribution?: Record<string, number>
+}
+
+export interface AlertRule {
+  name: string
+  event: AlertEventType
+  condition: AlertCondition
+  threshold: string
+  enabled: boolean
+}
+
+export interface AlertRecord {
+  id: string
+  event_type: AlertEventType
+  rule_name: string
+  data: Record<string, unknown>
+  sent: boolean
+  error?: string
+  created_at: string
+}
+
+export interface IntelResult {
+  ip: string
+  port: number
+  protocol: string
+  host: string
+  title: string
+  banner: string
+  country: string
+  city: string
+  source: string
+}
+
+export interface FOFAImportResult {
+  task: Task
+  targets: number
+  message: string
+}
+
+export interface TargetImportResult {
+  targets: string
+  count: number
+  message: string
 }

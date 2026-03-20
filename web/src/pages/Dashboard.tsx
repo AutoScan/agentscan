@@ -14,8 +14,8 @@ import type { Task, Vulnerability, RiskLevel } from '@/types'
 
 export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useDashboardStats()
-  const { data: tasksData } = useTaskList({ limit: '5' })
-  const { data: vulnsData } = useVulnList({ limit: '8' })
+  const { data: tasksData } = useTaskList({ limit: 5 })
+  const { data: vulnsData } = useVulnList({ limit: 8 })
 
   const recentTasks = tasksData?.data ?? []
   const recentVulns = vulnsData?.data ?? []

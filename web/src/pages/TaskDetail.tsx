@@ -115,7 +115,7 @@ export default function TaskDetail() {
         <Button icon={<ReloadOutlined />} onClick={() => refetch()}>
           刷新
         </Button>
-        {task.status === 'completed' && (
+        {(task.status === 'completed' || task.status === 'cancelled') && (
           <Button icon={<DownloadOutlined />} type="primary" onClick={() => exportExcel(id!)}>
             导出报告
           </Button>

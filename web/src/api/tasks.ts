@@ -1,25 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { request } from './client'
-import type { Task, CreateTaskRequest, PaginatedResponse } from '@/types'
+import { buildQueryString, normalizeQueryParams } from '@/utils/query'
+import type { Task, CreateTaskRequest, PaginatedResponse, TaskListParams } from '@/types'
 
 export const taskKeys = {
   all: ['tasks'] as const,
   lists: () => [...taskKeys.all, 'list'] as const,
-  list: (params?: Record<string, string>) => [...taskKeys.lists(), params ?? {}] as const,
+  list: (params?: TaskListParams) => [...taskKeys.lists(), normalizeQueryParams(params)] as const,
   details: () => [...taskKeys.all, 'detail'] as const,
   detail: (id: string) => [...taskKeys.details(), id] as const,
 }
 
-function buildQS(params?: Record<string, string>): string {
-  if (!params) return ''
-  const filtered = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== ''))
-  return Object.keys(filtered).length ? '?' + new URLSearchParams(filtered).toString() : ''
-}
-
-export function useTaskList(params?: Record<string, string>) {
+export function useTaskList(params?: TaskListParams) {
   return useQuery({
     queryKey: taskKeys.list(params),
-    queryFn: () => request<PaginatedResponse<Task>>(`/tasks${buildQS(params)}`),
+    queryFn: () => {
+      const query = buildQueryString(params)
+      return request<PaginatedResponse<Task>>(`/tasks${query ? `?${query}` : ''}`)
+    },
     refetchInterval: 10_000,
   })
 }

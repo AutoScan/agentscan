@@ -6,6 +6,8 @@ import {
   ScanOutlined,
   CloudServerOutlined,
   BugOutlined,
+  AlertOutlined,
+  RadarChartOutlined,
   LogoutOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/auth'
@@ -18,6 +20,8 @@ const menuItems = [
   { key: '/tasks', icon: <ScanOutlined />, label: '扫描任务' },
   { key: '/assets', icon: <CloudServerOutlined />, label: '资产管理' },
   { key: '/vulnerabilities', icon: <BugOutlined />, label: '漏洞列表' },
+  { key: '/alerts', icon: <AlertOutlined />, label: '告警中心' },
+  { key: '/intel', icon: <RadarChartOutlined />, label: '情报中心' },
 ]
 
 export default function AppLayout() {
@@ -28,7 +32,8 @@ export default function AppLayout() {
 
   useWSInvalidation()
 
-  const selectedKey = '/' + location.pathname.split('/').filter(Boolean)[0] || '/'
+  const firstPathSegment = location.pathname.split('/').filter(Boolean)[0]
+  const selectedKey = firstPathSegment ? `/${firstPathSegment}` : '/'
 
   return (
     <Layout style={{ minHeight: '100vh' }}>

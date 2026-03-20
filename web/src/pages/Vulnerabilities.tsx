@@ -1,16 +1,48 @@
-import { useState, useMemo } from 'react'
-import { Table, Typography, Select, Space, Descriptions, Input, Tooltip, Tag } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import type { ColumnsType } from 'antd/es/table'
+import { Table, Typography, Select, Space, Descriptions, Input, Tooltip, Tag, Button } from 'antd'
 import { BugOutlined, WarningOutlined, SafetyCertificateOutlined, SearchOutlined } from '@ant-design/icons'
 import { useVulnList } from '@/api/vulns'
 import StatCards from '@/components/StatCards'
 import RiskTag from '@/components/RiskTag'
-import { RISK_LABELS, getRiskOptions, cvssColor } from '@/constants'
+import { cvssColor, getRiskOptions } from '@/constants'
 import { CHECK_TYPE_LABELS, getCheckTypeOptions } from '@/constants/check'
-import type { Vulnerability } from '@/types'
+import { useURLQueryState } from '@/hooks/useURLQueryState'
+import type { Vulnerability, VulnListParams } from '@/types'
+
+type VulnerabilityQueryState = {
+  page: number
+  limit: number
+  cve_id: string
+  severity: string
+  check_type: string
+}
+
+const VULN_QUERY_DEFAULTS: VulnerabilityQueryState = {
+  page: 1,
+  limit: 20,
+  cve_id: '',
+  severity: '',
+  check_type: '',
+}
 
 export default function Vulnerabilities() {
-  const [filters, setFilters] = useState<Record<string, string>>({})
-  const { data, isLoading } = useVulnList(filters)
+  const { params, setParams, resetParams } = useURLQueryState(VULN_QUERY_DEFAULTS)
+  const [searchCVE, setSearchCVE] = useState(params.cve_id)
+
+  useEffect(() => {
+    setSearchCVE(params.cve_id)
+  }, [params.cve_id])
+
+  const queryParams: VulnListParams = {
+    page: params.page,
+    limit: params.limit,
+    cve_id: params.cve_id || undefined,
+    severity: params.severity ? (params.severity as Vulnerability['severity']) : undefined,
+    check_type: params.check_type ? (params.check_type as Vulnerability['check_type']) : undefined,
+  }
+
+  const { data, isLoading } = useVulnList(queryParams)
 
   const vulns = data?.data ?? []
   const total = data?.total ?? 0
@@ -18,18 +50,14 @@ export default function Vulnerabilities() {
   const sevStats = useMemo(
     () =>
       vulns.reduce(
-        (acc, v) => {
-          acc[v.severity] = (acc[v.severity] || 0) + 1
+        (acc, vuln) => {
+          acc[vuln.severity] = (acc[vuln.severity] || 0) + 1
           return acc
         },
         {} as Record<string, number>,
       ),
     [vulns],
   )
-
-  const updateFilter = (key: string, value: string) => {
-    setFilters((prev) => ({ ...prev, [key]: value }))
-  }
 
   const expandedRow = (record: Vulnerability) => (
     <Descriptions size="small" column={2} bordered>
@@ -51,17 +79,17 @@ export default function Vulnerabilities() {
     </Descriptions>
   )
 
-  const columns = [
+  const columns: ColumnsType<Vulnerability> = [
     {
       title: 'CVE编号',
       dataIndex: 'cve_id',
       key: 'cve_id',
       width: 160,
-      render: (v: string) =>
-        v ? (
+      render: (value: string) =>
+        value ? (
           <Tooltip title="点击查看NVD详情">
-            <Typography.Link href={`https://nvd.nist.gov/vuln/detail/${v}`} target="_blank">
-              {v}
+            <Typography.Link href={`https://nvd.nist.gov/vuln/detail/${value}`} target="_blank">
+              {value}
             </Typography.Link>
           </Tooltip>
         ) : (
@@ -74,9 +102,9 @@ export default function Vulnerabilities() {
       key: 'title',
       width: 300,
       ellipsis: true,
-      render: (v: string) => (
-        <Tooltip title={v}>
-          <Typography.Text strong>{v}</Typography.Text>
+      render: (value: string) => (
+        <Tooltip title={value}>
+          <Typography.Text strong>{value}</Typography.Text>
         </Tooltip>
       ),
     },
@@ -85,28 +113,24 @@ export default function Vulnerabilities() {
       dataIndex: 'severity',
       key: 'severity',
       width: 100,
-      render: (v: string) => <RiskTag level={v} />,
-      filters: Object.entries(RISK_LABELS).map(([k, v]) => ({ text: v, value: k })),
-      onFilter: (value: unknown, record: Vulnerability) => record.severity === value,
+      render: (value: string) => <RiskTag level={value} />,
     },
     {
       title: 'CVSS',
       dataIndex: 'cvss',
       key: 'cvss',
       width: 80,
-      align: 'right' as const,
-      render: (v: number) => (
-        <Typography.Text style={{ color: cvssColor(v), fontWeight: 'bold' }}>{v?.toFixed(1)}</Typography.Text>
+      align: 'right',
+      render: (value: number) => (
+        <Typography.Text style={{ color: cvssColor(value), fontWeight: 'bold' }}>{value?.toFixed(1)}</Typography.Text>
       ),
-      sorter: (a: Vulnerability, b: Vulnerability) => a.cvss - b.cvss,
-      defaultSortOrder: 'descend' as const,
     },
     {
       title: '检测类型',
       dataIndex: 'check_type',
       key: 'check_type',
       width: 120,
-      render: (v: string) => <Tag color="geekblue">{CHECK_TYPE_LABELS[v] || v}</Tag>,
+      render: (value: string) => <Tag color="geekblue">{CHECK_TYPE_LABELS[value] || value}</Tag>,
     },
     {
       title: '修复建议',
@@ -114,9 +138,11 @@ export default function Vulnerabilities() {
       key: 'remediation',
       width: 220,
       ellipsis: true,
-      render: (v: string) => <Typography.Text type="success">{v || '-'}</Typography.Text>,
+      render: (value: string) => <Typography.Text type="success">{value || '-'}</Typography.Text>,
     },
   ]
+
+  const hasFilters = Boolean(params.cve_id || params.severity || params.check_type)
 
   return (
     <div>
@@ -146,24 +172,33 @@ export default function Vulnerabilities() {
         <Input.Search
           placeholder="搜索CVE编号"
           allowClear
-          style={{ width: 200 }}
+          style={{ width: 220 }}
           prefix={<SearchOutlined />}
-          onSearch={(v) => updateFilter('cve_id', v)}
+          value={searchCVE}
+          onChange={(event) => setSearchCVE(event.target.value)}
+          onSearch={(value) => setParams({ cve_id: value.trim(), page: 1 }, { replace: false })}
         />
         <Select
           placeholder="严重等级"
           allowClear
-          style={{ width: 120 }}
+          style={{ width: 140 }}
+          value={params.severity || undefined}
           options={getRiskOptions()}
-          onChange={(v) => updateFilter('severity', v || '')}
+          onChange={(value) => setParams({ severity: value ?? '', page: 1 }, { replace: false })}
         />
         <Select
           placeholder="检测类型"
           allowClear
-          style={{ width: 140 }}
+          style={{ width: 160 }}
+          value={params.check_type || undefined}
           options={getCheckTypeOptions()}
-          onChange={(v) => updateFilter('check_type', v || '')}
+          onChange={(value) => setParams({ check_type: value ?? '', page: 1 }, { replace: false })}
         />
+        {hasFilters && (
+          <Button onClick={() => resetParams({}, { replace: false })}>
+            清空筛选
+          </Button>
+        )}
       </Space>
 
       <Table
@@ -172,7 +207,14 @@ export default function Vulnerabilities() {
         rowKey="id"
         loading={isLoading}
         expandable={{ expandedRowRender: expandedRow }}
-        pagination={{ total, pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
+        pagination={{
+          current: params.page,
+          pageSize: params.limit,
+          total,
+          showSizeChanger: true,
+          showTotal: (value) => `共 ${value} 条`,
+          onChange: (page, pageSize) => setParams({ page, limit: pageSize }, { replace: false }),
+        }}
         size="middle"
         scroll={{ x: 1200 }}
       />
